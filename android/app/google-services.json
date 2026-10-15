@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "372241843368",
+    "project_id": "talk-and-chat-3e95b",
+    "storage_bucket": "talk-and-chat-3e95b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:372241843368:android:0ac49e06a9863ec18eae9d",
+        "android_client_info": {
+          "package_name": "com.securetalk.secure_talk_chat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCAFW1ap7M8KydeNYyqMeXDTkIPotaCTxk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
