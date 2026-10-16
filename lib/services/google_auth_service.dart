@@ -17,6 +17,10 @@ class GoogleAuthService {
   Future<UserCredential> signInWithGoogle() async {
     if (kIsWeb) {
       final provider = GoogleAuthProvider();
+
+      // Minta pengguna memilih akun Google setiap kali login.
+      provider.setCustomParameters({'prompt': 'select_account'});
+
       return _auth.signInWithPopup(provider);
     }
 
@@ -40,8 +44,12 @@ class GoogleAuthService {
   }
 
   Future<void> signOut() async {
+    // Keluar dari sesi autentikasi Firebase.
     await _auth.signOut();
 
+    // Keluar dari sesi Google pada Android.
+    // Untuk web, pemilihan akun ditangani melalui
+    // prompt: select_account saat login berikutnya.
     if (!kIsWeb) {
       await GoogleSignIn.instance.signOut();
     }

@@ -43,7 +43,61 @@ class SecureTalkApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const IdentityDemoPage(),
+      home: const AuthGate(),
+    );
+  }
+}
+
+// ============================================================
+// AUTH GATE
+// Menentukan halaman berdasarkan status login Firebase.
+// ============================================================
+
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (snapshot.hasError) {
+          return Scaffold(
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'Gagal memeriksa status login:\n${snapshot.error}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          );
+        }
+
+        final user = snapshot.data;
+
+        if (user == null) {
+          return const IdentityDemoPage();
+        }
+
+        final displayName = user.displayName?.trim().isNotEmpty == true
+            ? user.displayName!.trim()
+            : user.email?.split('@').first ?? 'Pengguna';
+
+        return DemoHomePage(
+          userName: displayName,
+          userId: user.uid,
+          userEmail: user.email ?? '',
+          photoUrl: user.photoURL,
+        );
+      },
     );
   }
 }
@@ -97,21 +151,10 @@ class _IdentityDemoPageState extends State<IdentityDemoPage> {
         profileData['createdAt'] = FieldValue.serverTimestamp();
       }
 
-      // Mengikuti field yang diizinkan oleh Firestore Rules saat ini.
       await userRef.set(profileData, SetOptions(merge: true));
 
-      if (!mounted) return;
-
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(
-          builder: (_) => DemoHomePage(
-            userName: displayName,
-            userId: user.uid,
-            userEmail: user.email ?? '',
-            photoUrl: user.photoURL,
-          ),
-        ),
-      );
+      // AuthGate akan mendeteksi sesi login dan menampilkan
+      // DemoHomePage secara otomatis.
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
 
@@ -291,13 +334,7 @@ class DemoHomePage extends StatelessWidget {
   Future<void> _signOut(BuildContext context) async {
     try {
       await GoogleAuthService().signOut();
-
-      if (!context.mounted) return;
-
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute<void>(builder: (_) => const IdentityDemoPage()),
-        (route) => false,
-      );
+      // AuthGate akan menampilkan halaman login otomatis.
     } catch (e) {
       if (!context.mounted) return;
 
