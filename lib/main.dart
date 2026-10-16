@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'firebase_options.dart';
+import 'screens/users_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -85,7 +86,6 @@ class _IdentityDemoPageState extends State<IdentityDemoPage> {
     try {
       final auth = FirebaseAuth.instance;
 
-      // Gunakan sesi yang ada atau login anonim.
       User? user = auth.currentUser;
 
       if (user == null) {
@@ -97,7 +97,6 @@ class _IdentityDemoPageState extends State<IdentityDemoPage> {
         throw Exception('Gagal mendapatkan identitas pengguna.');
       }
 
-      // Simpan profil dengan UID sebagai document ID.
       final userRef = FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid);
@@ -430,6 +429,23 @@ class DemoHomePage extends StatelessWidget {
               ),
 
               const SizedBox(height: 24),
+
+              // Navigate to the user directory
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => UsersPage()),
+                    );
+                  },
+                  icon: const Icon(Icons.people_outline_rounded),
+                  label: const Text('Cari Pengguna untuk Chat'),
+                ),
+              ),
+
+              const SizedBox(height: 12),
 
               OutlinedButton.icon(
                 onPressed: () => Navigator.pop(context),
