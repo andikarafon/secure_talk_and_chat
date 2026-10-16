@@ -437,7 +437,7 @@ class DemoHomePage extends StatelessWidget {
                   onPressed: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => UsersPage()),
+                      MaterialPageRoute(builder: (context) => UsersPage()),
                     );
                   },
                   icon: const Icon(Icons.people_outline_rounded),

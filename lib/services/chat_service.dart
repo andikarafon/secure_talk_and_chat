@@ -21,67 +21,128 @@ class ChatService {
     return uid;
   }
 
-  // Stream profil pengguna selain pengguna yang sedang login.
   Stream<List<AppUser>> watchOtherUsers() {
     return _firestore.collection('users').snapshots().map((snapshot) {
-      return snapshot.docs
+      final users = snapshot.docs
           .where((doc) => doc.id != currentUid)
           .map((doc) => AppUser.fromMap(doc.id, doc.data()))
-          .where((user) => user.displayName.isNotEmpty)
-          .toList()
-        ..sort(
-          (a, b) => a.displayName.toLowerCase().compareTo(
-            b.displayName.toLowerCase(),
-          ),
-        );
+          .toList();
+
+      users.sort(
+        (a, b) =>
+            a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
+      );
+
+      return users;
     });
   }
 
-  // ID deterministik untuk satu pasangan pengguna.
   String conversationIdFor(String otherUid) {
     if (otherUid == currentUid) {
-      throw ArgumentError('Tidak dapat membuat chat dengan diri sendiri.');
+      throw ArgumentError('Tidak dapat chat dengan diri sendiri.');
     }
 
     final ids = [currentUid, otherUid]..sort();
     return '${ids[0]}_${ids[1]}';
   }
 
-  // Mengambil percakapan yang sudah ada atau membuat yang baru.
+  DocumentReference<Map<String, dynamic>> _conversationRef(
+    String conversationId,
+  ) {
+    return _firestore.collection('conversations').doc(conversationId);
+  }
+
   Future<String> getOrCreateConversation(String otherUid) async {
     final myUid = currentUid;
 
     if (otherUid == myUid) {
-      throw ArgumentError('Tidak dapat membuat chat dengan diri sendiri.');
+      throw ArgumentError('Tidak dapat chat dengan diri sendiri.');
     }
 
     final ids = [myUid, otherUid]..sort();
     final conversationId = '${ids[0]}_${ids[1]}';
+    final ref = _conversationRef(conversationId);
 
-    final conversationRef = _firestore
-        .collection('conversations')
-        .doc(conversationId);
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(ref);
 
-    final existing = await conversationRef.get();
+      if (snapshot.exists) {
+        final data = snapshot.data()!;
+        final participants = List<String>.from(
+          data['participants'] ?? const [],
+        );
 
-    if (existing.exists) {
-      final data = existing.data()!;
-      final participants = List<String>.from(data['participants'] ?? const []);
+        if (!participants.contains(myUid) || !participants.contains(otherUid)) {
+          throw StateError('Peserta percakapan tidak valid.');
+        }
 
-      if (!participants.contains(myUid) || !participants.contains(otherUid)) {
-        throw StateError('Data percakapan tidak valid.');
+        return;
       }
 
-      return conversationId;
-    }
-
-    await conversationRef.set({
-      'participants': ids,
-      'createdAt': FieldValue.serverTimestamp(),
-      'lastMessage': '',
-      'lastMessageAt': FieldValue.serverTimestamp(),
+      transaction.set(ref, {
+        'participants': ids,
+        'createdAt': FieldValue.serverTimestamp(),
+        'lastMessage': '',
+        'lastMessageAt': FieldValue.serverTimestamp(),
+      });
     });
 
     return conversationId;
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> watchMessages(
+    String conversationId,
+  ) {
+    return _conversationRef(conversationId)
+        .collection('messages')
+        .orderBy('createdAt', descending: false)
+        .snapshots();
+  }
+
+  Future<void> sendMessage({
+    required String conversationId,
+    required String text,
+  }) async {
+    final message = text.trim();
+
+    if (message.isEmpty) return;
+
+    if (message.length > 4000) {
+      throw ArgumentError('Pesan maksimal 4000 karakter.');
+    }
+
+    final uid = currentUid;
+    final conversationRef = _conversationRef(conversationId);
+
+    // Memastikan pengguna merupakan peserta percakapan.
+    final conversation = await conversationRef.get();
+
+    if (!conversation.exists) {
+      throw StateError('Percakapan tidak ditemukan.');
+    }
+
+    final data = conversation.data()!;
+    final participants = List<String>.from(data['participants'] ?? const []);
+
+    if (!participants.contains(uid)) {
+      throw StateError('Anda bukan peserta percakapan ini.');
+    }
+
+    final batch = _firestore.batch();
+
+    final messageRef = conversationRef.collection('messages').doc();
+
+    batch.set(messageRef, {
+      'senderId': uid,
+      'text': message,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    batch.update(conversationRef, {
+      'lastMessage': message,
+      'lastMessageAt': FieldValue.serverTimestamp(),
+    });
+
+    await batch.commit();
   }
 }
