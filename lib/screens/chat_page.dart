@@ -62,7 +62,6 @@ class _ChatPageState extends State<ChatPage> {
     } catch (e) {
       if (!mounted) return;
 
-      // Pulihkan teks agar pengguna tidak perlu mengetik ulang.
       _messageController.text = text;
       _messageController.selection = TextSelection.collapsed(
         offset: _messageController.text.length,
@@ -71,7 +70,7 @@ class _ChatPageState extends State<ChatPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Gagal mengirim pesan: $e'),
-          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
         ),
       );
     } finally {
@@ -83,32 +82,69 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  String _formatTime(dynamic timestamp) {
-    if (timestamp is! Timestamp) {
-      return 'Mengirim...';
+  String _formatTime(dynamic value) {
+    if (value is Timestamp) {
+      final date = value.toDate();
+      final hour = date.hour.toString().padLeft(2, '0');
+      final minute = date.minute.toString().padLeft(2, '0');
+      return '$hour:$minute';
     }
 
-    final date = timestamp.toDate().toLocal();
-    final hour = date.hour.toString().padLeft(2, '0');
-    final minute = date.minute.toString().padLeft(2, '0');
-
-    return '$hour:$minute';
+    return 'Mengirim...';
   }
 
-  Widget _buildMessage(Map<String, dynamic> data) {
+  Widget _buildConversationInfo() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      color: const Color(0xFF171B24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'INFORMASI DEBUG',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 6),
+          SelectableText(
+            'CURRENT UID: ${_currentUid ?? "Belum login"}',
+            style: const TextStyle(color: Colors.greenAccent, fontSize: 10),
+          ),
+          const SizedBox(height: 4),
+          SelectableText(
+            'TARGET UID: ${widget.otherUserId}',
+            style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 10),
+          ),
+          const SizedBox(height: 4),
+          SelectableText(
+            'CONVERSATION UID: ${widget.conversationId}',
+            style: const TextStyle(color: Colors.orangeAccent, fontSize: 10),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessage(QueryDocumentSnapshot<Map<String, dynamic>> document) {
+    final data = document.data();
     final isMine = data['senderId'] == _currentUid;
     final text = data['text'] as String? ?? '';
+    final time = _formatTime(data['createdAt']);
 
     return Align(
       alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * 0.78,
+          maxWidth: MediaQuery.of(context).size.width * 0.78,
         ),
-        margin: const EdgeInsets.only(bottom: 10),
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: isMine ? const Color(0xFF4776F5) : const Color(0xFF171F33),
+          color: isMine ? const Color(0xFF34558A) : const Color(0xFF202631),
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(16),
             topRight: const Radius.circular(16),
@@ -123,21 +159,13 @@ class _ChatPageState extends State<ChatPage> {
               alignment: Alignment.centerLeft,
               child: Text(
                 text,
-                softWrap: true,
-                style: const TextStyle(
-                  fontSize: 15,
-                  height: 1.4,
-                  color: Colors.white,
-                ),
+                style: const TextStyle(color: Colors.white, fontSize: 15),
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 5),
             Text(
-              _formatTime(data['createdAt']),
-              style: TextStyle(
-                fontSize: 10,
-                color: Colors.white.withValues(alpha: 0.7),
-              ),
+              time,
+              style: const TextStyle(color: Colors.white70, fontSize: 10),
             ),
           ],
         ),
@@ -152,10 +180,11 @@ class _ChatPageState extends State<ChatPage> {
         if (snapshot.hasError) {
           return Center(
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(16),
               child: Text(
-                'Gagal memuat pesan.\n${snapshot.error}',
+                'Gagal memuat pesan:\n${snapshot.error}',
                 textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.redAccent),
               ),
             ),
           );
@@ -166,35 +195,16 @@ class _ChatPageState extends State<ChatPage> {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final messages = snapshot.data?.docs ?? [];
+        final documents = snapshot.data?.docs ?? [];
 
-        if (messages.isEmpty) {
-          return Center(
+        if (documents.isEmpty) {
+          return const Center(
             child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.waving_hand_outlined,
-                    size: 52,
-                    color: Color(0xFF8FA9E8),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Mulai percakapan',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Kirim pesan pertama kepada '
-                    '${widget.otherUserName}.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.65),
-                    ),
-                  ),
-                ],
+              padding: EdgeInsets.all(24),
+              child: Text(
+                'Belum ada pesan.\nMulai percakapan sekarang!',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white70),
               ),
             ),
           );
@@ -202,10 +212,11 @@ class _ChatPageState extends State<ChatPage> {
 
         return ListView.builder(
           controller: _scrollController,
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          itemCount: messages.length,
+          reverse: false,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          itemCount: documents.length,
           itemBuilder: (context, index) {
-            return _buildMessage(messages[index].data());
+            return _buildMessage(documents[index]);
           },
         );
       },
@@ -216,10 +227,10 @@ class _ChatPageState extends State<ChatPage> {
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
         decoration: const BoxDecoration(
-          color: Color(0xFF111827),
-          border: Border(top: BorderSide(color: Color(0xFF253047))),
+          color: Color(0xFF111318),
+          border: Border(top: BorderSide(color: Colors.white12)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -230,34 +241,46 @@ class _ChatPageState extends State<ChatPage> {
                 minLines: 1,
                 maxLines: 5,
                 maxLength: 4000,
-                enabled: !_sending,
-                textCapitalization: TextCapitalization.sentences,
-                textInputAction: TextInputAction.send,
-                onSubmitted: (_) => _sendMessage(),
+                style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
                   hintText: 'Tulis pesan...',
+                  hintStyle: const TextStyle(color: Colors.white54),
                   counterText: '',
+                  filled: true,
+                  fillColor: const Color(0xFF202631),
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 12,
                   ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(24),
+                    borderSide: BorderSide.none,
                   ),
                 ),
+                onSubmitted: (_) => _sendMessage(),
               ),
             ),
             const SizedBox(width: 8),
-            IconButton.filled(
-              tooltip: 'Kirim pesan',
-              onPressed: _sending ? null : _sendMessage,
-              icon: _sending
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.send_rounded),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: IconButton(
+                onPressed: _sending ? null : _sendMessage,
+                style: IconButton.styleFrom(
+                  backgroundColor: const Color(0xFF34558A),
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: Colors.grey,
+                ),
+                icon: _sending
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.send),
+              ),
             ),
           ],
         ),
@@ -268,31 +291,35 @@ class _ChatPageState extends State<ChatPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF0B1020),
       appBar: AppBar(
-        titleSpacing: 0,
+        backgroundColor: const Color(0xFF111318),
+        foregroundColor: Colors.white,
+        toolbarHeight: 90,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               widget.otherUserName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
             ),
+            const SizedBox(height: 2),
             const Text(
               'Secure Talk',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+              style: TextStyle(fontSize: 12, color: Colors.white70),
+            ),
+            const SizedBox(height: 4),
+            SelectableText(
+              'CONVERSATION UID: ${widget.conversationId}',
+              style: const TextStyle(fontSize: 10, color: Colors.orangeAccent),
             ),
           ],
         ),
-        actions: const [
-          Padding(
-            padding: EdgeInsets.only(right: 16),
-            child: Icon(Icons.lock_outline_rounded),
-          ),
-        ],
       ),
       body: Column(
         children: [
+          _buildConversationInfo(),
           Expanded(child: _buildMessages()),
           _buildComposer(),
         ],

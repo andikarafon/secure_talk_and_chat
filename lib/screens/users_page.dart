@@ -30,7 +30,7 @@ class _UsersPageState extends State<UsersPage> {
 
       if (!mounted) return;
 
-      await Navigator.push(
+      await Navigator.push<void>(
         context,
         MaterialPageRoute<void>(
           builder: (context) => ChatPage(
@@ -46,7 +46,7 @@ class _UsersPageState extends State<UsersPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Gagal membuka percakapan: $e'),
-          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
         ),
       );
     } finally {
@@ -58,146 +58,198 @@ class _UsersPageState extends State<UsersPage> {
     }
   }
 
-  String _initial(String name) {
-    final trimmed = name.trim();
-    return trimmed.isEmpty ? '?' : trimmed[0].toUpperCase();
+  Widget _buildDebugPanel() {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171B24),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.blueGrey.shade700),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'INFORMASI DEBUG',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SelectableText(
+            'CURRENT UID:\n${_chatService.currentUid}',
+            style: const TextStyle(color: Colors.greenAccent, fontSize: 11),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Pilih pengguna untuk melihat TARGET UID '
+            'dan CONVERSATION UID.',
+            style: TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUserTile(AppUser user) {
+    final isOpening = _openingUserId == user.uid;
+
+    final conversationId = _chatService.conversationIdFor(user.uid);
+
+    return Card(
+      color: const Color(0xFF191D26),
+      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 10,
+        ),
+        leading: CircleAvatar(
+          radius: 22,
+          backgroundColor: const Color(0xFF34558A),
+          child: Text(
+            user.displayName.isNotEmpty
+                ? user.displayName[0].toUpperCase()
+                : '?',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        title: Text(
+          user.displayName,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Pengguna Secure Talk',
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+              const SizedBox(height: 10),
+              const Divider(color: Colors.white12, height: 1),
+              const SizedBox(height: 8),
+              const Text(
+                'TARGET UID:',
+                style: TextStyle(
+                  color: Colors.lightBlueAccent,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 2),
+              SelectableText(
+                user.uid,
+                style: const TextStyle(
+                  color: Colors.lightBlueAccent,
+                  fontSize: 11,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'CONVERSATION UID:',
+                style: TextStyle(
+                  color: Colors.orangeAccent,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 2),
+              SelectableText(
+                conversationId,
+                style: const TextStyle(
+                  color: Colors.orangeAccent,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+        trailing: isOpening
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(
+                Icons.chat_bubble_outline,
+                color: Colors.lightBlueAccent,
+              ),
+        onTap: _openingUserId != null ? null : () => _openConversation(user),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Pengguna')),
-      body: StreamBuilder<List<AppUser>>(
-        stream: _chatService.watchOtherUsers(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return _buildError(snapshot.error.toString());
-          }
-
-          if (snapshot.connectionState == ConnectionState.waiting &&
-              !snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final users = snapshot.data ?? <AppUser>[];
-
-          if (users.isEmpty) {
-            return _buildEmptyState();
-          }
-
-          return ListView.separated(
-            padding: const EdgeInsets.all(12),
-            itemCount: users.length,
-            separatorBuilder: (context, index) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final user = users[index];
-              final isOpening = _openingUserId == user.uid;
-              final isBusy = _openingUserId != null;
-
-              return Card(
-                margin: EdgeInsets.zero,
-                color: const Color(0xFF191C24),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 6,
-                  ),
-                  leading: CircleAvatar(
-                    backgroundColor: const Color(0xFF304B7E),
-                    child: Text(
-                      _initial(user.displayName),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
+      backgroundColor: const Color(0xFF0B1020),
+      appBar: AppBar(
+        title: const Text('Pengguna'),
+        backgroundColor: const Color(0xFF111318),
+        foregroundColor: Colors.white,
+      ),
+      body: Column(
+        children: [
+          _buildDebugPanel(),
+          Expanded(
+            child: StreamBuilder<List<AppUser>>(
+              stream: _chatService.watchOtherUsers(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Text(
+                        'Gagal memuat pengguna:\n${snapshot.error}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.redAccent),
                       ),
                     ),
-                  ),
-                  title: Text(
-                    user.displayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  subtitle: const Text('Pengguna Secure Talk'),
-                  trailing: isOpening
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.chat_bubble_outline_rounded),
-                  enabled: !isBusy,
-                  onTap: isBusy ? null : () => _openConversation(user),
-                ),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
+                  );
+                }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.people_outline_rounded,
-              size: 64,
-              color: Color(0xFF8FA9E8),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Belum ada pengguna lain',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Jalankan Secure Talk and Chat pada HP kedua '
-              'dan masuk dengan identitas berbeda.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.65)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+                if (snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-  Widget _buildError(String message) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.cloud_off_outlined,
-              size: 52,
-              color: Colors.orangeAccent,
+                final users = snapshot.data ?? [];
+
+                if (users.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'Belum ada pengguna lain.\n'
+                      'Login di perangkat lain untuk menguji chat.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  );
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  itemCount: users.length,
+                  itemBuilder: (context, index) {
+                    return _buildUserTile(users[index]);
+                  },
+                );
+              },
             ),
-            const SizedBox(height: 16),
-            const Text(
-              'Gagal memuat pengguna',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            SelectableText(message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: () => setState(() {}),
-              icon: const Icon(Icons.refresh),
-              label: const Text('Coba lagi'),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
