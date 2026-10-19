@@ -72,7 +72,7 @@ class _UsersPageState extends State<UsersPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'INFORMASI DEBUG',
+            'INFORMASI USER',
             style: TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.bold,
@@ -85,11 +85,11 @@ class _UsersPageState extends State<UsersPage> {
             style: const TextStyle(color: Colors.greenAccent, fontSize: 11),
           ),
           const SizedBox(height: 4),
-          const Text(
-            'Pilih pengguna untuk melihat TARGET UID '
-            'dan CONVERSATION UID.',
-            style: TextStyle(color: Colors.white70, fontSize: 11),
-          ),
+          // const Text(
+          //   'Pilih pengguna untuk melihat TARGET UID '
+          //   'dan CONVERSATION UID.',
+          //   style: TextStyle(color: Colors.white70, fontSize: 11),
+          // ),
         ],
       ),
     );

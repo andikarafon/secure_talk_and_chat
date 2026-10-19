@@ -102,7 +102,7 @@ class _ChatPageState extends State<ChatPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'INFORMASI DEBUG',
+            'INFORMASI USER LOGIN',
             style: TextStyle(
               color: Colors.white70,
               fontSize: 11,
