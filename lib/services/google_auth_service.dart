@@ -10,46 +10,83 @@ class GoogleAuthService {
 
   static Future<void>? _googleInitialization;
 
+  /// Inisialisasi Google Sign-In.
   Future<void> _initializeGoogleSignIn() {
-    return _googleInitialization ??= GoogleSignIn.instance.initialize();
+    return _googleInitialization ??= _initializeGoogleSignInInternal();
   }
 
-  Future<UserCredential> signInWithGoogle() async {
-    if (kIsWeb) {
-      final provider = GoogleAuthProvider();
+  Future<void> _initializeGoogleSignInInternal() async {
+    // OAuth 2.0 Client ID bertipe Web application.
+    // Pastikan ID ini benar-benar milik project Firebase Anda.
+    const serverClientId =
+        '372241843368-33bh7fqsbiead10crceogm4ad63kiq6s.apps.googleusercontent.com';
 
-      // Minta pengguna memilih akun Google setiap kali login.
-      provider.setCustomParameters({'prompt': 'select_account'});
+    // PEMERIKSAAN SEMENTARA
+    debugPrint('========== GOOGLE SIGN-IN DEBUG ==========');
+    debugPrint('Platform Web: $kIsWeb');
+    debugPrint('Web Client ID tersedia: ${serverClientId.isNotEmpty}');
+    debugPrint('Web Client ID panjang: ${serverClientId.length}');
+    debugPrint('==========================================');
 
-      return _auth.signInWithPopup(provider);
-    }
-
-    await _initializeGoogleSignIn();
-
-    final googleUser = await GoogleSignIn.instance.authenticate();
-
-    final googleAuth = googleUser.authentication;
-    final idToken = googleAuth.idToken;
-
-    if (idToken == null) {
+    if (!kIsWeb && serverClientId.isEmpty) {
       throw FirebaseAuthException(
-        code: 'missing-google-id-token',
-        message: 'Google tidak memberikan ID token.',
+        code: 'missing-server-client-id',
+        message: 'Web Client ID belum dikonfigurasi.',
       );
     }
 
-    final credential = GoogleAuthProvider.credential(idToken: idToken);
-
-    return _auth.signInWithCredential(credential);
+    await GoogleSignIn.instance.initialize(
+      serverClientId: kIsWeb ? null : serverClientId,
+    );
   }
 
+  /// Login menggunakan akun Google.
+  Future<UserCredential> signInWithGoogle() async {
+    try {
+      // Login untuk Web.
+      if (kIsWeb) {
+        final provider = GoogleAuthProvider();
+
+        provider.setCustomParameters({'prompt': 'select_account'});
+
+        return await _auth.signInWithPopup(provider);
+      }
+
+      // Login untuk Android.
+      await _initializeGoogleSignIn();
+
+      final googleUser = await GoogleSignIn.instance.authenticate();
+
+      final googleAuth = googleUser.authentication;
+      final idToken = googleAuth.idToken;
+
+      if (idToken == null) {
+        throw FirebaseAuthException(
+          code: 'missing-google-id-token',
+          message: 'Google tidak memberikan ID token.',
+        );
+      }
+
+      final credential = GoogleAuthProvider.credential(idToken: idToken);
+
+      return await _auth.signInWithCredential(credential);
+    } on FirebaseAuthException {
+      rethrow;
+    } on GoogleSignInException catch (e) {
+      debugPrint('Google Sign-In error code: ${e.code}');
+      debugPrint('Google Sign-In error description: ${e.description}');
+      rethrow;
+    } catch (e, stackTrace) {
+      debugPrint('Unexpected Google login error: $e');
+      debugPrintStack(stackTrace: stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Logout dari Firebase dan Google.
   Future<void> signOut() async {
-    // Keluar dari sesi autentikasi Firebase.
     await _auth.signOut();
 
-    // Keluar dari sesi Google pada Android.
-    // Untuk web, pemilihan akun ditangani melalui
-    // prompt: select_account saat login berikutnya.
     if (!kIsWeb) {
       await GoogleSignIn.instance.signOut();
     }
