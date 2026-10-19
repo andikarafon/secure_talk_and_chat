@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Koneksi internet untuk Firebase dan LiveKit -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Permission untuk panggilan suara -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <application
         android:label="secure_talk_chat"
         android:name="${applicationName}"

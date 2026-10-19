@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/chat_service.dart';
+import 'call_page.dart';
 
 class ChatPage extends StatefulWidget {
   final String conversationId;
@@ -29,11 +30,16 @@ class _ChatPageState extends State<ChatPage> {
 
   String? get _currentUid => FirebaseAuth.instance.currentUser?.uid;
 
-  @override
-  void dispose() {
-    _messageController.dispose();
-    _scrollController.dispose();
-    super.dispose();
+  // TAMBAHAN: Membuka halaman panggilan LiveKit.
+  void _openCallPage() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CallPage(
+          conversationId: widget.conversationId,
+          otherUserName: widget.otherUserName,
+        ),
+      ),
+    );
   }
 
   Future<void> _sendMessage() async {
@@ -41,9 +47,9 @@ class _ChatPageState extends State<ChatPage> {
 
     if (text.isEmpty || _sending) return;
 
-    if (text.length > 4000) {
+    if (_currentUid == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pesan maksimal 4000 karakter.')),
+        const SnackBar(content: Text('Silakan login terlebih dahulu.')),
       );
       return;
     }
@@ -52,27 +58,18 @@ class _ChatPageState extends State<ChatPage> {
       _sending = true;
     });
 
-    _messageController.clear();
-
     try {
       await _chatService.sendMessage(
         conversationId: widget.conversationId,
         text: text,
       );
+
+      _messageController.clear();
     } catch (e) {
       if (!mounted) return;
 
-      _messageController.text = text;
-      _messageController.selection = TextSelection.collapsed(
-        offset: _messageController.text.length,
-      );
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Gagal mengirim pesan: $e'),
-          duration: const Duration(seconds: 5),
-        ),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Gagal mengirim pesan: $e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -82,61 +79,78 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  String _formatTime(dynamic value) {
-    if (value is Timestamp) {
-      final date = value.toDate();
-      final hour = date.hour.toString().padLeft(2, '0');
-      final minute = date.minute.toString().padLeft(2, '0');
-      return '$hour:$minute';
-    }
+  String _formatTime(dynamic timestamp) {
+    if (timestamp is! Timestamp) return '';
 
-    return 'Mengirim...';
+    final dateTime = timestamp.toDate();
+    final hour = dateTime.hour.toString().padLeft(2, '0');
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+
+    return '$hour:$minute';
   }
 
+  // Informasi diagnostik yang sudah tersedia pada halaman chat.
   Widget _buildConversationInfo() {
     return Container(
       width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
       padding: const EdgeInsets.all(10),
-      color: const Color(0xFF171B24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF151D30),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white10),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'INFORMASI USER LOGIN',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
+          _infoRow('CURRENT UID', _currentUid ?? '-'),
+          _infoRow('TARGET UID', widget.otherUserId),
+          _infoRow('CONVERSATION UID', widget.conversationId),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 125,
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white54,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
-          const SizedBox(height: 6),
-          SelectableText(
-            'CURRENT UID: ${_currentUid ?? "Belum login"}',
-            style: const TextStyle(color: Colors.greenAccent, fontSize: 10),
-          ),
-          const SizedBox(height: 4),
-          SelectableText(
-            'TARGET UID: ${widget.otherUserId}',
-            style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 10),
-          ),
-          const SizedBox(height: 4),
-          SelectableText(
-            'CONVERSATION UID: ${widget.conversationId}',
-            style: const TextStyle(color: Colors.orangeAccent, fontSize: 10),
+          Expanded(
+            child: SelectableText(
+              value,
+              style: const TextStyle(color: Colors.white70, fontSize: 10),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildMessage(QueryDocumentSnapshot<Map<String, dynamic>> document) {
-    final data = document.data();
-    final isMine = data['senderId'] == _currentUid;
-    final text = data['text'] as String? ?? '';
-    final time = _formatTime(data['createdAt']);
+  Widget _buildMessage(Map<String, dynamic> data, String documentId) {
+    final currentUid = _currentUid;
+
+    // Asumsi struktur pesan menggunakan senderId, text, dan createdAt.
+    final senderId = data['senderId']?.toString() ?? '';
+    final text = data['text']?.toString() ?? '';
+    final timestamp = data['createdAt'];
+
+    final isMe = senderId == currentUid;
 
     return Align(
-      alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.78,
@@ -144,12 +158,12 @@ class _ChatPageState extends State<ChatPage> {
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: isMine ? const Color(0xFF34558A) : const Color(0xFF202631),
+          color: isMe ? const Color(0xFF34558A) : const Color(0xFF202A3D),
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(isMine ? 16 : 4),
-            bottomRight: Radius.circular(isMine ? 4 : 16),
+            topLeft: const Radius.circular(14),
+            topRight: const Radius.circular(14),
+            bottomLeft: Radius.circular(isMe ? 14 : 4),
+            bottomRight: Radius.circular(isMe ? 4 : 14),
           ),
         ),
         child: Column(
@@ -164,8 +178,8 @@ class _ChatPageState extends State<ChatPage> {
             ),
             const SizedBox(height: 5),
             Text(
-              time,
-              style: const TextStyle(color: Colors.white70, fontSize: 10),
+              _formatTime(timestamp),
+              style: const TextStyle(color: Colors.white60, fontSize: 10),
             ),
           ],
         ),
@@ -180,7 +194,7 @@ class _ChatPageState extends State<ChatPage> {
         if (snapshot.hasError) {
           return Center(
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(20),
               child: Text(
                 'Gagal memuat pesan:\n${snapshot.error}',
                 textAlign: TextAlign.center,
@@ -195,28 +209,43 @@ class _ChatPageState extends State<ChatPage> {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final documents = snapshot.data?.docs ?? [];
+        final messages = snapshot.data?.docs ?? [];
 
-        if (documents.isEmpty) {
+        if (messages.isEmpty) {
           return const Center(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Text(
-                'Belum ada pesan.\nMulai percakapan sekarang!',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white70),
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.chat_bubble_outline,
+                  size: 48,
+                  color: Colors.white30,
+                ),
+                SizedBox(height: 12),
+                Text(
+                  'Belum ada pesan',
+                  style: TextStyle(color: Colors.white60, fontSize: 14),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'Mulai percakapan sekarang.',
+                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                ),
+              ],
             ),
           );
         }
 
         return ListView.builder(
           controller: _scrollController,
-          reverse: false,
+          reverse: true,
           padding: const EdgeInsets.symmetric(vertical: 12),
-          itemCount: documents.length,
+          itemCount: messages.length,
           itemBuilder: (context, index) {
-            return _buildMessage(documents[index]);
+            // Daftar dibalik agar pesan terbaru berada di bawah.
+            final message = messages[index];
+
+            return _buildMessage(message.data(), message.id);
           },
         );
       },
@@ -227,10 +256,10 @@ class _ChatPageState extends State<ChatPage> {
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         decoration: const BoxDecoration(
-          color: Color(0xFF111318),
-          border: Border(top: BorderSide(color: Colors.white12)),
+          color: Color(0xFF111827),
+          border: Border(top: BorderSide(color: Colors.white10)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -240,14 +269,13 @@ class _ChatPageState extends State<ChatPage> {
                 controller: _messageController,
                 minLines: 1,
                 maxLines: 5,
-                maxLength: 4000,
-                style: const TextStyle(color: Colors.white),
+                textCapitalization: TextCapitalization.sentences,
+                style: const TextStyle(color: Colors.white, fontSize: 15),
                 decoration: InputDecoration(
                   hintText: 'Tulis pesan...',
-                  hintStyle: const TextStyle(color: Colors.white54),
-                  counterText: '',
+                  hintStyle: const TextStyle(color: Colors.white38),
                   filled: true,
-                  fillColor: const Color(0xFF202631),
+                  fillColor: const Color(0xFF202A3D),
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 12,
@@ -261,23 +289,22 @@ class _ChatPageState extends State<ChatPage> {
               ),
             ),
             const SizedBox(width: 8),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 2),
+            SizedBox(
+              width: 48,
+              height: 48,
               child: IconButton(
+                tooltip: 'Kirim pesan',
                 onPressed: _sending ? null : _sendMessage,
                 style: IconButton.styleFrom(
                   backgroundColor: const Color(0xFF34558A),
                   foregroundColor: Colors.white,
-                  disabledBackgroundColor: Colors.grey,
+                  disabledBackgroundColor: Colors.white12,
                 ),
                 icon: _sending
                     ? const SizedBox(
                         width: 20,
                         height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.send),
               ),
@@ -289,33 +316,41 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   @override
+  void dispose() {
+    _messageController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0B1020),
       appBar: AppBar(
         backgroundColor: const Color(0xFF111318),
         foregroundColor: Colors.white,
-        toolbarHeight: 90,
+        titleSpacing: 0,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               widget.otherUserName,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
-            const SizedBox(height: 2),
             const Text(
-              'Secure Talk',
-              style: TextStyle(fontSize: 12, color: Colors.white70),
-            ),
-            const SizedBox(height: 4),
-            SelectableText(
-              'CONVERSATION UID: ${widget.conversationId}',
-              style: const TextStyle(fontSize: 10, color: Colors.orangeAccent),
+              'Secure Talk and Chat',
+              style: TextStyle(fontSize: 11, color: Colors.white60),
             ),
           ],
         ),
+        actions: [
+          // TAMBAHAN: Tombol untuk membuka halaman panggilan LiveKit.
+          IconButton(
+            tooltip: 'Panggilan suara',
+            onPressed: _openCallPage,
+            icon: const Icon(Icons.call, color: Colors.greenAccent),
+          ),
+        ],
       ),
       body: Column(
         children: [
