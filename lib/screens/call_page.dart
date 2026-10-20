@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 
@@ -22,7 +21,10 @@ class CallPage extends StatefulWidget {
 
 class _CallPageState extends State<CallPage> {
   final LiveKitService _liveKitService = LiveKitService();
-  final lk.Room _room = lk.Room();
+
+  final lk.Room _room = lk.Room(
+    roomOptions: const lk.RoomOptions(adaptiveStream: true, dynacast: true),
+  );
 
   bool _connecting = false;
   bool _connected = false;
@@ -45,6 +47,7 @@ class _CallPageState extends State<CallPage> {
 
     _debugLog('========== CALL PAGE STARTED ==========');
     _debugLog('Conversation ID: ${widget.conversationId}');
+
     _connectToRoom();
   }
 
@@ -77,12 +80,17 @@ class _CallPageState extends State<CallPage> {
     });
   }
 
+  // ============================================================
+  // CONNECT TO LIVEKIT
+  // ============================================================
+
   Future<void> _connectToRoom() async {
-    // Mencegah koneksi dimulai berkali-kali secara bersamaan.
     if (_connecting || _ending || _disposed) {
       _debugLog('Koneksi diabaikan: proses sedang berjalan.');
       return;
     }
+
+    if (!mounted) return;
 
     setState(() {
       _connecting = true;
@@ -113,7 +121,7 @@ class _CallPageState extends State<CallPage> {
       _debugLog('Token present: ${token is String && token.isNotEmpty}');
       _debugLog('=================================');
 
-      if (expectedRoom != tokenRoom) {
+      if (tokenRoom != expectedRoom) {
         throw Exception('Room dari token tidak cocok dengan conversationId.');
       }
 
@@ -132,11 +140,8 @@ class _CallPageState extends State<CallPage> {
 
       _debugLog('STEP 2: Memulai Room.connect().');
 
-      await _room.connect(
-        serverUrl,
-        token,
-        roomOptions: const lk.RoomOptions(adaptiveStream: true, dynacast: true),
-      );
+      // RoomOptions sudah dikonfigurasi pada constructor Room.
+      await _room.connect(serverUrl, token);
 
       _debugLog('STEP 3: Room.connect() BERHASIL.');
       _debugLog('Connected room: ${_room.name}');
@@ -204,6 +209,10 @@ class _CallPageState extends State<CallPage> {
     }
   }
 
+  // ============================================================
+  // MUTE / UNMUTE
+  // ============================================================
+
   Future<void> _toggleMicrophone() async {
     if (!_connected || _ending || _disposed) return;
 
@@ -230,9 +239,14 @@ class _CallPageState extends State<CallPage> {
     } catch (e, stackTrace) {
       _debugLog('MICROPHONE ERROR: $e');
       _debugLog('$stackTrace');
+
       _showMessage('Gagal mengubah mikrofon: $e');
     }
   }
+
+  // ============================================================
+  // MESSAGE
+  // ============================================================
 
   void _showMessage(String message) {
     if (!mounted || _disposed) return;
@@ -240,6 +254,10 @@ class _CallPageState extends State<CallPage> {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
   }
+
+  // ============================================================
+  // END CALL
+  // ============================================================
 
   Future<void> _endCall() async {
     if (_ending || _disposed) return;
@@ -262,6 +280,10 @@ class _CallPageState extends State<CallPage> {
     Navigator.of(context).pop();
   }
 
+  // ============================================================
+  // CLEANUP
+  // ============================================================
+
   Future<void> _cleanup() async {
     _room.removeListener(_onRoomChanged);
 
@@ -281,6 +303,10 @@ class _CallPageState extends State<CallPage> {
     unawaited(_cleanup());
     super.dispose();
   }
+
+  // ============================================================
+  // UI
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {

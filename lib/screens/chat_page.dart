@@ -9,12 +9,14 @@ class ChatPage extends StatefulWidget {
   final String conversationId;
   final String otherUserId;
   final String otherUserName;
+  final bool openCallOnStart;
 
   const ChatPage({
     super.key,
     required this.conversationId,
     required this.otherUserId,
     required this.otherUserName,
+    this.openCallOnStart = false,
   });
 
   @override
@@ -27,30 +29,71 @@ class _ChatPageState extends State<ChatPage> {
   final ScrollController _scrollController = ScrollController();
 
   bool _sending = false;
+  bool _callPageOpened = false;
+
+  String? _lastMessageId;
 
   String? get _currentUid => FirebaseAuth.instance.currentUser?.uid;
 
-  // TAMBAHAN: Membuka halaman panggilan LiveKit.
-  void _openCallPage() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => CallPage(
-          conversationId: widget.conversationId,
-          otherUserName: widget.otherUserName,
-        ),
-      ),
-    );
+  @override
+  void initState() {
+    super.initState();
+
+    if (widget.openCallOnStart) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _openCallPage();
+      });
+    }
   }
+
+  // ============================================================
+  // OPEN CALL PAGE
+  // ============================================================
+
+  Future<void> _openCallPage() async {
+    if (_callPageOpened) return;
+
+    if (_currentUid == null) {
+      _showMessage('Silakan login terlebih dahulu.');
+      return;
+    }
+
+    _callPageOpened = true;
+
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => CallPage(
+            conversationId: widget.conversationId,
+            otherUserName: widget.otherUserName,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _showMessage('Gagal membuka panggilan: $e');
+    } finally {
+      _callPageOpened = false;
+    }
+  }
+
+  // ============================================================
+  // SEND MESSAGE
+  // ============================================================
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
 
     if (text.isEmpty || _sending) return;
 
+    if (text.length > 4000) {
+      _showMessage('Pesan maksimal 4000 karakter.');
+      return;
+    }
+
     if (_currentUid == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Silakan login terlebih dahulu.')),
-      );
+      _showMessage('Silakan login terlebih dahulu.');
       return;
     }
 
@@ -64,12 +107,13 @@ class _ChatPageState extends State<ChatPage> {
         text: text,
       );
 
+      if (!mounted) return;
+
       _messageController.clear();
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Gagal mengirim pesan: $e')));
+      _showMessage('Gagal mengirim pesan: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -78,6 +122,10 @@ class _ChatPageState extends State<ChatPage> {
       }
     }
   }
+
+  // ============================================================
+  // MESSAGE TIME
+  // ============================================================
 
   String _formatTime(dynamic timestamp) {
     if (timestamp is! Timestamp) return '';
@@ -89,7 +137,10 @@ class _ChatPageState extends State<ChatPage> {
     return '$hour:$minute';
   }
 
-  // Informasi diagnostik yang sudah tersedia pada halaman chat.
+  // ============================================================
+  // CONVERSATION INFORMATION
+  // ============================================================
+
   Widget _buildConversationInfo() {
     return Container(
       width: double.infinity,
@@ -139,10 +190,13 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  Widget _buildMessage(Map<String, dynamic> data, String documentId) {
+  // ============================================================
+  // MESSAGE BUBBLE
+  // ============================================================
+
+  Widget _buildMessage(Map<String, dynamic> data) {
     final currentUid = _currentUid;
 
-    // Asumsi struktur pesan menggunakan senderId, text, dan createdAt.
     final senderId = data['senderId']?.toString() ?? '';
     final text = data['text']?.toString() ?? '';
     final timestamp = data['createdAt'];
@@ -186,6 +240,10 @@ class _ChatPageState extends State<ChatPage> {
       ),
     );
   }
+
+  // ============================================================
+  // REAL-TIME MESSAGES
+  // ============================================================
 
   Widget _buildMessages() {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -236,21 +294,39 @@ class _ChatPageState extends State<ChatPage> {
           );
         }
 
+        final latestMessageId = messages.last.id;
+
+        if (_lastMessageId != latestMessageId) {
+          _lastMessageId = latestMessageId;
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || !_scrollController.hasClients) {
+              return;
+            }
+
+            _scrollController.animateTo(
+              _scrollController.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOut,
+            );
+          });
+        }
+
         return ListView.builder(
           controller: _scrollController,
-          reverse: true,
           padding: const EdgeInsets.symmetric(vertical: 12),
           itemCount: messages.length,
           itemBuilder: (context, index) {
-            // Daftar dibalik agar pesan terbaru berada di bawah.
-            final message = messages[index];
-
-            return _buildMessage(message.data(), message.id);
+            return _buildMessage(messages[index].data());
           },
         );
       },
     );
   }
+
+  // ============================================================
+  // MESSAGE COMPOSER
+  // ============================================================
 
   Widget _buildComposer() {
     return SafeArea(
@@ -315,12 +391,31 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  // ============================================================
+  // HELPER
+  // ============================================================
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  // ============================================================
+  // DISPOSE
+  // ============================================================
+
   @override
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
+
+  // ============================================================
+  // PAGE UI
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
@@ -344,7 +439,6 @@ class _ChatPageState extends State<ChatPage> {
           ],
         ),
         actions: [
-          // TAMBAHAN: Tombol untuk membuka halaman panggilan LiveKit.
           IconButton(
             tooltip: 'Panggilan suara',
             onPressed: _openCallPage,

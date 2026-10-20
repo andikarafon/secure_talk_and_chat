@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'firebase_options.dart';
 import 'screens/users_page.dart';
 import 'services/google_auth_service.dart';
+import 'widgets/incoming_call_listener.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -91,11 +92,13 @@ class AuthGate extends StatelessWidget {
             ? user.displayName!.trim()
             : user.email?.split('@').first ?? 'Pengguna';
 
-        return DemoHomePage(
-          userName: displayName,
-          userId: user.uid,
-          userEmail: user.email ?? '',
-          photoUrl: user.photoURL,
+        return IncomingCallListener(
+          child: DemoHomePage(
+            userName: displayName,
+            userId: user.uid,
+            userEmail: user.email ?? '',
+            photoUrl: user.photoURL,
+          ),
         );
       },
     );
@@ -153,8 +156,8 @@ class _IdentityDemoPageState extends State<IdentityDemoPage> {
 
       await userRef.set(profileData, SetOptions(merge: true));
 
-      // AuthGate akan mendeteksi sesi login dan menampilkan
-      // DemoHomePage secara otomatis.
+      // AuthGate mendeteksi sesi login dan menampilkan
+      // DemoHomePage beserta IncomingCallListener.
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
 
@@ -334,6 +337,7 @@ class DemoHomePage extends StatelessWidget {
   Future<void> _signOut(BuildContext context) async {
     try {
       await GoogleAuthService().signOut();
+
       // AuthGate akan menampilkan halaman login otomatis.
     } catch (e) {
       if (!context.mounted) return;
@@ -421,7 +425,8 @@ class DemoHomePage extends StatelessWidget {
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Profil pengguna tersimpan di Firestore',
+                              'Profil pengguna tersimpan '
+                              'di Firestore',
                             ),
                           ),
                         ],
