@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/chat_service.dart';
+import '../services/call_signaling_service.dart';
 import 'call_page.dart';
 
 class ChatPage extends StatefulWidget {
@@ -10,6 +11,7 @@ class ChatPage extends StatefulWidget {
   final String otherUserId;
   final String otherUserName;
   final bool openCallOnStart;
+  final String? callId;
 
   const ChatPage({
     super.key,
@@ -17,6 +19,7 @@ class ChatPage extends StatefulWidget {
     required this.otherUserId,
     required this.otherUserName,
     this.openCallOnStart = false,
+    this.callId,
   });
 
   @override
@@ -25,7 +28,10 @@ class ChatPage extends StatefulWidget {
 
 class _ChatPageState extends State<ChatPage> {
   final ChatService _chatService = ChatService();
+  final CallSignalingService _callSignalingService = CallSignalingService();
+
   final TextEditingController _messageController = TextEditingController();
+
   final ScrollController _scrollController = ScrollController();
 
   bool _sending = false;
@@ -54,25 +60,58 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _openCallPage() async {
     if (_callPageOpened) return;
 
-    if (_currentUid == null) {
+    final currentUid = _currentUid;
+
+    if (currentUid == null) {
       _showMessage('Silakan login terlebih dahulu.');
       return;
     }
 
     _callPageOpened = true;
+    String? activeCallId;
 
     try {
+      if (widget.openCallOnStart) {
+        // Panggilan masuk menggunakan dokumen panggilan
+        // yang sudah dibuat oleh penelepon.
+        activeCallId = widget.callId;
+
+        if (activeCallId == null || activeCallId.trim().isEmpty) {
+          throw StateError('ID panggilan masuk tidak tersedia.');
+        }
+      } else {
+        // Panggilan keluar membuat dokumen baru di Firestore.
+        activeCallId = await _callSignalingService.createCall(
+          conversationId: widget.conversationId,
+          callerId: currentUid,
+          calleeId: widget.otherUserId,
+        );
+      }
+
+      if (!mounted) {
+        if (!widget.openCallOnStart) {
+          await _callSignalingService.cancelCall(callId: activeCallId);
+        }
+        return;
+      }
+
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (_) => CallPage(
+            userId: currentUid,
             conversationId: widget.conversationId,
             otherUserName: widget.otherUserName,
+            callId: activeCallId,
           ),
         ),
       );
-    } catch (e) {
-      if (!mounted) return;
-      _showMessage('Gagal membuka panggilan: $e');
+    } catch (e, stackTrace) {
+      debugPrint('Gagal membuka panggilan: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
+      if (mounted) {
+        _showMessage('Gagal memulai panggilan: $e');
+      }
     } finally {
       _callPageOpened = false;
     }

@@ -1,18 +1,24 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 
+import '../services/call_signaling_service.dart';
 import '../services/livekit_service.dart';
 
 class CallPage extends StatefulWidget {
+  final String? userId;
   final String conversationId;
   final String otherUserName;
+  final String? callId;
 
   const CallPage({
     super.key,
+    this.userId,
     required this.conversationId,
     required this.otherUserName,
+    this.callId,
   });
 
   @override
@@ -21,16 +27,20 @@ class CallPage extends StatefulWidget {
 
 class _CallPageState extends State<CallPage> {
   final LiveKitService _liveKitService = LiveKitService();
+  final CallSignalingService _callSignalingService = CallSignalingService();
 
   final lk.Room _room = lk.Room(
     roomOptions: const lk.RoomOptions(adaptiveStream: true, dynacast: true),
   );
+
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _callSubscription;
 
   bool _connecting = false;
   bool _connected = false;
   bool _muted = false;
   bool _ending = false;
   bool _disposed = false;
+  bool _finishedRemotely = false;
 
   String _status = 'Siap menghubungkan panggilan';
   String? _error;
@@ -47,23 +57,97 @@ class _CallPageState extends State<CallPage> {
 
     _debugLog('========== CALL PAGE STARTED ==========');
     _debugLog('Conversation ID: ${widget.conversationId}');
+    _debugLog('Call ID: ${widget.callId}');
+    _debugLog('User ID: ${widget.userId}');
 
+    _startCallStatusListener();
     _connectToRoom();
   }
 
-  void _onRoomChanged() {
-    final state = _room.connectionState;
-    final connected = state == lk.ConnectionState.connected;
-    final remoteParticipants = _room.remoteParticipants;
+  // ============================================================
+  // FIRESTORE CALL STATUS
+  // ============================================================
 
-    _debugLog('========== ROOM CHANGED ==========');
-    _debugLog('Room name: ${_room.name}');
-    _debugLog('Connection state: $state');
-    _debugLog('Remote count: ${remoteParticipants.length}');
-    _debugLog('Remote identities: ${remoteParticipants.keys.toList()}');
-    _debugLog('==================================');
+  void _startCallStatusListener() {
+    final callId = widget.callId;
+
+    if (callId == null || callId.trim().isEmpty) {
+      _debugLog('ERROR: Call ID kosong; listener status tidak diaktifkan.');
+      return;
+    }
+
+    _debugLog('Memulai listener status untuk Call ID: $callId');
+
+    _callSubscription = _callSignalingService
+        .watchCall(callId: callId)
+        .listen(
+          (snapshot) {
+            if (!mounted || _disposed || _ending) return;
+
+            if (!snapshot.exists) {
+              _debugLog('Dokumen panggilan tidak ditemukan.');
+              unawaited(_finishFromRemote('Data panggilan tidak ditemukan.'));
+              return;
+            }
+
+            final status = snapshot.data()?['status'] as String?;
+
+            _debugLog('Status panggilan Firestore: $status');
+
+            if (status == 'ended' || status == 'rejected') {
+              unawaited(
+                _finishFromRemote(
+                  status == 'rejected'
+                      ? 'Panggilan ditolak.'
+                      : 'Panggilan telah berakhir.',
+                ),
+              );
+            }
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            _debugLog('Call status listener error: $error');
+            _debugLog('$stackTrace');
+          },
+        );
+  }
+
+  Future<void> _finishFromRemote(String message) async {
+    if (_ending || _disposed || _finishedRemotely) return;
+
+    _finishedRemotely = true;
+    _ending = true;
+
+    _debugLog('Mengakhiri panggilan dari perangkat lawan: $message');
+
+    if (mounted) {
+      setState(() {
+        _status = message;
+        _connected = false;
+        _connecting = false;
+      });
+    }
+
+    try {
+      await _room.disconnect();
+      _debugLog('LiveKit berhasil diputus dari perangkat ini.');
+    } catch (e) {
+      _debugLog('Remote disconnect error: $e');
+    }
 
     if (!mounted || _disposed) return;
+
+    Navigator.of(context).pop();
+  }
+
+  // ============================================================
+  // LIVEKIT ROOM LISTENER
+  // ============================================================
+
+  void _onRoomChanged() {
+    if (!mounted || _disposed) return;
+
+    final connected = _room.connectionState == lk.ConnectionState.connected;
+    final remoteParticipants = _room.remoteParticipants;
 
     setState(() {
       _connected = connected;
@@ -85,12 +169,7 @@ class _CallPageState extends State<CallPage> {
   // ============================================================
 
   Future<void> _connectToRoom() async {
-    if (_connecting || _ending || _disposed) {
-      _debugLog('Koneksi diabaikan: proses sedang berjalan.');
-      return;
-    }
-
-    if (!mounted) return;
+    if (_connecting || _ending || _disposed || !mounted) return;
 
     setState(() {
       _connecting = true;
@@ -100,26 +179,18 @@ class _CallPageState extends State<CallPage> {
     });
 
     try {
-      _debugLog('STEP 1: Meminta token dari backend.');
-
       final credentials = await _liveKitService.getCallToken(
         roomName: widget.conversationId,
       );
 
       final expectedRoom = widget.conversationId;
       final tokenRoom = credentials['roomName'];
-      final identity = credentials['identity'];
       final serverUrl = credentials['serverUrl'];
       final token = credentials['token'];
 
-      _debugLog('========== TOKEN DEBUG ==========');
       _debugLog('Expected room: $expectedRoom');
       _debugLog('Token room: $tokenRoom');
-      _debugLog('Token identity: $identity');
       _debugLog('Server URL: $serverUrl');
-      _debugLog('Room matches: ${expectedRoom == tokenRoom}');
-      _debugLog('Token present: ${token is String && token.isNotEmpty}');
-      _debugLog('=================================');
 
       if (tokenRoom != expectedRoom) {
         throw Exception('Room dari token tidak cocok dengan conversationId.');
@@ -132,36 +203,28 @@ class _CallPageState extends State<CallPage> {
         throw Exception('Server URL atau token tidak valid.');
       }
 
-      if (!mounted || _disposed) return;
+      if (!mounted || _disposed || _ending) return;
 
       setState(() {
         _status = 'Menghubungkan ke room LiveKit...';
       });
 
-      _debugLog('STEP 2: Memulai Room.connect().');
-
-      // RoomOptions sudah dikonfigurasi pada constructor Room.
       await _room.connect(serverUrl, token);
 
-      _debugLog('STEP 3: Room.connect() BERHASIL.');
-      _debugLog('Connected room: ${_room.name}');
-      _debugLog('Connection state: ${_room.connectionState}');
-      _debugLog('Remote participants: ${_room.remoteParticipants.length}');
+      if (!mounted || _disposed || _ending) {
+        await _room.disconnect();
+        return;
+      }
 
       final participant = _room.localParticipant;
 
       if (participant == null) {
-        throw Exception('Peserta lokal tidak tersedia setelah koneksi.');
+        throw Exception('Peserta lokal tidak tersedia.');
       }
-
-      _debugLog('STEP 4: Mengaktifkan mikrofon.');
 
       await participant.setMicrophoneEnabled(true);
 
-      _debugLog('Mikrofon berhasil diaktifkan.');
-      _debugLog('Local identity: ${participant.identity}');
-
-      if (!mounted || _disposed) {
+      if (!mounted || _disposed || _ending) {
         await _room.disconnect();
         return;
       }
@@ -175,16 +238,11 @@ class _CallPageState extends State<CallPage> {
             : 'Terhubung — lawan bicara sudah masuk';
       });
 
-      _debugLog('========== CONNECTION RESULT ==========');
-      _debugLog('Expected room: $expectedRoom');
-      _debugLog('Connected room: ${_room.name}');
-      _debugLog('Connected: $_connected');
-      _debugLog('Remote count: ${_room.remoteParticipants.length}');
-      _debugLog('Remote identities: ${_room.remoteParticipants.keys.toList()}');
-      _debugLog('========================================');
+      _debugLog('LiveKit berhasil terhubung.');
+      _debugLog('Local identity: ${participant.identity}');
     } catch (e, stackTrace) {
       _debugLog('CONNECTION ERROR: $e');
-      _debugLog('CONNECTION STACK TRACE:\n$stackTrace');
+      _debugLog('$stackTrace');
 
       try {
         await _room.disconnect();
@@ -192,7 +250,7 @@ class _CallPageState extends State<CallPage> {
         _debugLog('Disconnect error: $disconnectError');
       }
 
-      if (!mounted || _disposed) return;
+      if (!mounted || _disposed || _ending) return;
 
       setState(() {
         _connecting = false;
@@ -201,7 +259,7 @@ class _CallPageState extends State<CallPage> {
         _status = 'Gagal menghubungkan panggilan';
       });
     } finally {
-      if (mounted && !_disposed && _connecting) {
+      if (mounted && !_disposed && _connecting && !_ending) {
         setState(() {
           _connecting = false;
         });
@@ -228,18 +286,14 @@ class _CallPageState extends State<CallPage> {
     try {
       await participant.setMicrophoneEnabled(!newMuted);
 
-      _debugLog('Microphone muted: $newMuted');
-
-      if (!mounted || _disposed) return;
+      if (!mounted || _disposed || _ending) return;
 
       setState(() {
         _muted = newMuted;
         _status = newMuted ? 'Mikrofon dimatikan' : 'Mikrofon aktif';
       });
-    } catch (e, stackTrace) {
+    } catch (e) {
       _debugLog('MICROPHONE ERROR: $e');
-      _debugLog('$stackTrace');
-
       _showMessage('Gagal mengubah mikrofon: $e');
     }
   }
@@ -267,15 +321,44 @@ class _CallPageState extends State<CallPage> {
       _status = 'Mengakhiri panggilan...';
     });
 
-    _debugLog('Mengakhiri panggilan.');
+    final callId = widget.callId;
+
+    _debugLog('Mengakhiri panggilan. Call ID: $callId');
+
+    if (callId != null && callId.trim().isNotEmpty) {
+      try {
+        await _callSignalingService.updateCallStatus(
+          callId: callId,
+          status: 'ended',
+        );
+
+        _debugLog('Status panggilan berhasil diubah menjadi ended.');
+
+        final snapshot = await FirebaseFirestore.instance
+            .collection('calls')
+            .doc(callId)
+            .get();
+
+        _debugLog(
+          'Status Firestore setelah update: '
+          '${snapshot.data()?['status']}',
+        );
+      } catch (e, stackTrace) {
+        _debugLog('Gagal memperbarui status panggilan: $e');
+        _debugLog('$stackTrace');
+      }
+    } else {
+      _debugLog('ERROR: Call ID kosong; status tidak diperbarui.');
+    }
 
     try {
       await _room.disconnect();
+      _debugLog('LiveKit berhasil diputus.');
     } catch (e) {
-      _debugLog('Error disconnecting room: $e');
+      _debugLog('Room disconnect error: $e');
     }
 
-    if (!mounted) return;
+    if (!mounted || _disposed) return;
 
     Navigator.of(context).pop();
   }
@@ -285,13 +368,24 @@ class _CallPageState extends State<CallPage> {
   // ============================================================
 
   Future<void> _cleanup() async {
+    try {
+      await _callSubscription?.cancel();
+    } catch (e) {
+      _debugLog('Subscription cleanup error: $e');
+    }
+
     _room.removeListener(_onRoomChanged);
 
     try {
       await _room.disconnect();
+    } catch (e) {
+      _debugLog('Room disconnect cleanup error: $e');
+    }
+
+    try {
       await _room.dispose();
     } catch (e) {
-      _debugLog('Cleanup error: $e');
+      _debugLog('Room dispose error: $e');
     }
 
     _liveKitService.dispose();

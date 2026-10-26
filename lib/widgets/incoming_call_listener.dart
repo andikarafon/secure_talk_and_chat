@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -21,8 +23,21 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
 
   final Set<String> _handledCallIds = <String>{};
 
+  // Menyimpan daftar panggilan masuk terbaru dari Firestore.
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _latestIncomingCalls = [];
+
   String? _activeUserId;
+  String? _activeDialogCallId;
   bool _showingDialog = false;
+
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+  _activeCallSubscription;
+
+  @override
+  void dispose() {
+    _activeCallSubscription?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,6 +50,8 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
     if (_activeUserId != user.uid) {
       _activeUserId = user.uid;
       _handledCallIds.clear();
+      _latestIncomingCalls = [];
+      _activeDialogCallId = null;
       _showingDialog = false;
     }
 
@@ -58,17 +75,18 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
     List<QueryDocumentSnapshot<Map<String, dynamic>>> calls,
     String currentUserId,
   ) {
-    if (!mounted || _showingDialog) {
-      return;
-    }
+    // Simpan snapshot terbaru meskipun dialog sebelumnya aktif.
+    _latestIncomingCalls = calls;
+
+    if (!mounted || _showingDialog) return;
 
     for (final callDoc in calls) {
-      final Map<String, dynamic> data = callDoc.data();
+      final data = callDoc.data();
 
-      final String? callerId = data['callerId'] as String?;
-      final String? calleeId = data['calleeId'] as String?;
-      final String? conversationId = data['conversationId'] as String?;
-      final String? status = data['status'] as String?;
+      final callerId = data['callerId'] as String?;
+      final calleeId = data['calleeId'] as String?;
+      final conversationId = data['conversationId'] as String?;
+      final status = data['status'] as String?;
 
       if (callerId == null ||
           calleeId != currentUserId ||
@@ -83,17 +101,23 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
 
       _handledCallIds.add(callDoc.id);
       _showingDialog = true;
+      _activeDialogCallId = callDoc.id;
+
+      debugPrint('[INCOMING CALL] Panggilan masuk terdeteksi: ${callDoc.id}');
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
           _showingDialog = false;
+          _activeDialogCallId = null;
           return;
         }
 
-        _handleIncomingCall(
-          callId: callDoc.id,
-          callerId: callerId,
-          conversationId: conversationId,
+        unawaited(
+          _handleIncomingCall(
+            callId: callDoc.id,
+            callerId: callerId,
+            conversationId: conversationId,
+          ),
         );
       });
 
@@ -107,11 +131,9 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
     required String conversationId,
   }) async {
     try {
-      final String callerName = await _getCallerName(callerId);
+      final callerName = await _getCallerName(callerId);
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
       final callSnapshot = await _firestore
           .collection('calls')
@@ -119,14 +141,103 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
           .get();
 
       if (!callSnapshot.exists || callSnapshot.data()?['status'] != 'ringing') {
+        debugPrint(
+          '[INCOMING CALL] Panggilan tidak lagi berstatus ringing: $callId',
+        );
         return;
       }
 
-      if (!mounted) {
+      if (!mounted) return;
+
+      final action = await _showIncomingCallDialog(
+        callId: callId,
+        callerName: callerName,
+      );
+
+      if (!mounted || action == null) return;
+
+      if (action == 'reject') {
+        await _rejectCall(callId);
         return;
       }
 
-      final String? action = await showDialog<String>(
+      if (action == 'accept') {
+        await _acceptCall(
+          callId: callId,
+          callerId: callerId,
+          callerName: callerName,
+          conversationId: conversationId,
+        );
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Gagal menangani panggilan masuk: $e');
+      debugPrintStack(stackTrace: stackTrace);
+    } finally {
+      if (_activeDialogCallId == callId) {
+        _activeDialogCallId = null;
+        _showingDialog = false;
+
+        debugPrint('[INCOMING CALL] Penanganan panggilan selesai: $callId');
+
+        // Periksa ulang daftar terbaru setelah dialog selesai.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+
+          final userId = _activeUserId;
+          if (userId == null) return;
+
+          _processIncomingCalls(_latestIncomingCalls, userId);
+        });
+      }
+    }
+  }
+
+  Future<String?> _showIncomingCallDialog({
+    required String callId,
+    required String callerName,
+  }) async {
+    final navigator = Navigator.of(context);
+
+    StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+    statusSubscription;
+
+    bool dialogClosed = false;
+
+    void closeDialogIfActive() {
+      if (dialogClosed) return;
+
+      dialogClosed = true;
+
+      if (navigator.mounted && navigator.canPop()) {
+        navigator.pop();
+      }
+    }
+
+    statusSubscription = _callSignalingService
+        .watchCall(callId: callId)
+        .listen(
+          (snapshot) {
+            final data = snapshot.data();
+            final status = data?['status'] as String?;
+
+            debugPrint('[INCOMING CALL] Status $callId: $status');
+
+            if (!snapshot.exists ||
+                (status != null &&
+                    status != 'ringing' &&
+                    status != 'accepted')) {
+              closeDialogIfActive();
+            }
+          },
+          onError: (Object error) {
+            debugPrint('Gagal memantau status panggilan: $error');
+          },
+        );
+
+    _activeCallSubscription = statusSubscription;
+
+    try {
+      return await showDialog<String>(
         context: context,
         barrierDismissible: false,
         builder: (dialogContext) {
@@ -177,29 +288,12 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
           );
         },
       );
-
-      if (!mounted || action == null) {
-        return;
-      }
-
-      if (action == 'reject') {
-        await _rejectCall(callId);
-        return;
-      }
-
-      if (action == 'accept') {
-        await _acceptCall(
-          callId: callId,
-          callerId: callerId,
-          callerName: callerName,
-          conversationId: conversationId,
-        );
-      }
-    } catch (e, stackTrace) {
-      debugPrint('Gagal menangani panggilan masuk: $e');
-      debugPrintStack(stackTrace: stackTrace);
     } finally {
-      _showingDialog = false;
+      await statusSubscription.cancel();
+
+      if (identical(_activeCallSubscription, statusSubscription)) {
+        _activeCallSubscription = null;
+      }
     }
   }
 
@@ -212,7 +306,7 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
 
       if (userSnapshot.exists) {
         final data = userSnapshot.data();
-        final dynamic displayName = data?['displayName'];
+        final displayName = data?['displayName'];
 
         if (displayName is String && displayName.trim().isNotEmpty) {
           return displayName.trim();
@@ -231,6 +325,8 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
         callId: callId,
         status: 'rejected',
       );
+
+      debugPrint('[INCOMING CALL] Panggilan ditolak: $callId');
     } catch (e) {
       debugPrint('Gagal menolak panggilan: $e');
     }
@@ -248,17 +344,23 @@ class _IncomingCallListenerState extends State<IncomingCallListener> {
         status: 'accepted',
       );
 
-      if (!mounted) {
-        return;
-      }
+      debugPrint('[INCOMING CALL] Panggilan diterima: $callId');
 
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (context) => ChatPage(
-            conversationId: conversationId,
-            otherUserId: callerId,
-            otherUserName: callerName,
-            openCallOnStart: true,
+      if (!mounted) return;
+
+      // Buka ChatPage tanpa menunggu sampai halaman ditutup.
+      // Dengan begitu, proses listener tidak tertahan oleh
+      // halaman percakapan yang dibuka.
+      unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => ChatPage(
+              conversationId: conversationId,
+              otherUserId: callerId,
+              otherUserName: callerName,
+              openCallOnStart: true,
+              callId: callId,
+            ),
           ),
         ),
       );

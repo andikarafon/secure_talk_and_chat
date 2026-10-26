@@ -22,7 +22,7 @@ class LiveKitService {
     }
 
     // Ganti dengan IP LAN komputer Anda sebelum menguji di HP Android.
-    return 'http://192.168.98.116:3000';
+    return 'http://192.168.96.116:3000';
   }
 
   /// Meminta token LiveKit menggunakan identitas Firebase yang login.
