@@ -37,6 +37,8 @@ class MediaService {
 
   static const int maxImageSize = 10 * 1024 * 1024;
   static const int maxDocumentSize = 20 * 1024 * 1024;
+  static const int maxGallerySize = 100 * 1024 * 1024;
+  static const int maxGalleryImages = 10;
 
   static const List<String> allowedImageExtensions = [
     'jpg',
@@ -67,7 +69,7 @@ class MediaService {
   }
 
   // ============================================================
-  // PICK AND UPLOAD IMAGE
+  // PICK AND UPLOAD SINGLE IMAGE
   // ============================================================
 
   Future<UploadedMedia?> pickAndUploadImage({
@@ -94,7 +96,6 @@ class MediaService {
     }
 
     final bytes = await pickedFile.readAsBytes();
-
     final mimeType = _getImageMimeType(extension);
 
     return _upload(
@@ -106,6 +107,133 @@ class MediaService {
       type: 'image',
       onProgress: onProgress,
     );
+  }
+
+  // ============================================================
+  // PICK AND UPLOAD MULTIPLE IMAGES
+  // ============================================================
+
+  Future<List<UploadedMedia>?> pickAndUploadGallery({
+    required String conversationId,
+    ValueChanged<double>? onProgress,
+  }) async {
+    if (conversationId.trim().isEmpty) {
+      throw ArgumentError('Conversation ID tidak valid.');
+    }
+
+    // Memilih beberapa foto dari galeri.
+    final pickedFiles = await _imagePicker.pickMultiImage();
+
+    if (pickedFiles.isEmpty) return null;
+
+    // Validasi jumlah foto.
+    if (pickedFiles.length > maxGalleryImages) {
+      throw ArgumentError('Maksimal $maxGalleryImages foto dalam satu galeri.');
+    }
+
+    debugPrint('========== GALLERY UPLOAD START ==========');
+    debugPrint('CONVERSATION: $conversationId');
+    debugPrint('TOTAL PHOTOS: ${pickedFiles.length}');
+
+    // ----------------------------------------------------------
+    // VALIDASI SEMUA FOTO SEBELUM UPLOAD
+    // ----------------------------------------------------------
+
+    final List<int> fileSizes = [];
+    final List<String> extensions = [];
+
+    int totalSize = 0;
+
+    for (final file in pickedFiles) {
+      final extension = _getExtension(file.name);
+
+      if (!allowedImageExtensions.contains(extension)) {
+        throw ArgumentError('Format foto ${file.name} tidak didukung.');
+      }
+
+      final fileSize = await file.length();
+
+      if (fileSize <= 0) {
+        throw ArgumentError('Foto ${file.name} tidak dapat dibaca.');
+      }
+
+      if (fileSize > maxImageSize) {
+        throw ArgumentError('Ukuran foto ${file.name} melebihi 10 MB.');
+      }
+
+      totalSize += fileSize;
+
+      fileSizes.add(fileSize);
+      extensions.add(extension);
+    }
+
+    if (totalSize > maxGallerySize) {
+      throw ArgumentError('Total ukuran galeri maksimal 100 MB.');
+    }
+
+    // ----------------------------------------------------------
+    // UPLOAD FOTO SECARA BERURUTAN
+    // ----------------------------------------------------------
+
+    final List<UploadedMedia> uploadedMedia = [];
+
+    int completedBytes = 0;
+
+    try {
+      for (int i = 0; i < pickedFiles.length; i++) {
+        final file = pickedFiles[i];
+        final fileName = file.name;
+        final fileSize = fileSizes[i];
+        final extension = extensions[i];
+
+        debugPrint('----------------------------------------');
+        debugPrint('UPLOADING PHOTO: ${i + 1}/${pickedFiles.length}');
+        debugPrint('FILE NAME: $fileName');
+        debugPrint('FILE SIZE: $fileSize');
+
+        final bytes = await file.readAsBytes();
+
+        final mimeType = _getImageMimeType(extension);
+
+        final uploaded = await _upload(
+          conversationId: conversationId,
+          fileName: fileName,
+          bytes: bytes,
+          mimeType: mimeType,
+          fileSize: fileSize,
+          type: 'image',
+          onProgress: (fileProgress) {
+            final overallProgress =
+                (completedBytes + (fileProgress * fileSize)) / totalSize;
+
+            onProgress?.call(overallProgress.clamp(0.0, 1.0));
+          },
+        );
+
+        uploadedMedia.add(uploaded);
+
+        completedBytes += fileSize;
+
+        onProgress?.call((completedBytes / totalSize).clamp(0.0, 1.0));
+
+        debugPrint('PHOTO UPLOAD SUCCESS: $fileName');
+      }
+
+      debugPrint('========== GALLERY UPLOAD SUCCESS ==========');
+      debugPrint('TOTAL UPLOADED: ${uploadedMedia.length}');
+      debugPrint('TOTAL SIZE: $totalSize');
+      debugPrint('============================================');
+
+      return uploadedMedia;
+    } catch (e, stackTrace) {
+      debugPrint('========== GALLERY UPLOAD FAILED ==========');
+      debugPrint('ERROR: $e');
+      debugPrint('$stackTrace');
+      debugPrint('UPLOADED PHOTOS: ${uploadedMedia.length}');
+      debugPrint('===========================================');
+
+      rethrow;
+    }
   }
 
   // ============================================================
@@ -175,6 +303,7 @@ class MediaService {
     }
 
     final safeName = _sanitizeFileName(fileName);
+
     final uniqueName = '${DateTime.now().microsecondsSinceEpoch}_$safeName';
 
     final storagePath = 'conversations/$conversationId/$uid/$uniqueName';
@@ -256,10 +385,13 @@ class MediaService {
       case 'jpg':
       case 'jpeg':
         return 'image/jpeg';
+
       case 'png':
         return 'image/png';
+
       case 'webp':
         return 'image/webp';
+
       default:
         throw ArgumentError('Format foto tidak didukung.');
     }
@@ -269,20 +401,28 @@ class MediaService {
     switch (extension) {
       case 'pdf':
         return 'application/pdf';
+
       case 'doc':
         return 'application/msword';
+
       case 'docx':
         return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
       case 'xls':
         return 'application/vnd.ms-excel';
+
       case 'xlsx':
         return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
       case 'ppt':
         return 'application/vnd.ms-powerpoint';
+
       case 'pptx':
         return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+
       case 'txt':
         return 'text/plain';
+
       default:
         throw ArgumentError('Format dokumen tidak didukung.');
     }

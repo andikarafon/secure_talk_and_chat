@@ -202,18 +202,18 @@ class _ChatPageState extends State<ChatPage> {
                 ListTile(
                   leading: const CircleAvatar(
                     backgroundColor: Color(0xFF34558A),
-                    child: Icon(Icons.image, color: Colors.white),
+                    child: Icon(Icons.photo_library, color: Colors.white),
                   ),
                   title: const Text(
-                    'Foto dari Galeri',
+                    'Galeri Foto',
                     style: TextStyle(color: Colors.white),
                   ),
                   subtitle: const Text(
-                    'JPG, JPEG, PNG, WEBP',
+                    'Pilih beberapa foto sekaligus (maks. 10)',
                     style: TextStyle(color: Colors.white54),
                   ),
                   onTap: () {
-                    Navigator.pop(context, 'image');
+                    Navigator.pop(context, 'gallery');
                   },
                 ),
                 ListTile(
@@ -242,18 +242,19 @@ class _ChatPageState extends State<ChatPage> {
 
     if (!mounted || selected == null) return;
 
-    if (selected == 'image') {
-      await _pickAndSendImage();
+    if (selected == 'gallery') {
+      await _pickAndSendGallery();
     } else if (selected == 'document') {
       await _pickAndSendDocument();
     }
   }
 
   // ============================================================
-  // PICK AND SEND IMAGE
+  // PICK AND SEND GALLERY
+  // ONE FIRESTORE MESSAGE
   // ============================================================
 
-  Future<void> _pickAndSendImage() async {
+  Future<void> _pickAndSendGallery() async {
     if (_sending) return;
 
     if (_currentUid == null) {
@@ -268,22 +269,23 @@ class _ChatPageState extends State<ChatPage> {
     });
 
     try {
-      final media = await _mediaService.pickAndUploadImage(
+      final medias = await _mediaService.pickAndUploadGallery(
         conversationId: widget.conversationId,
         onProgress: (progress) {
           if (!mounted) return;
 
           setState(() {
-            _uploadProgress = progress.clamp(0.0, 1.0);
+            _uploadProgress = progress.clamp(0.0, 1.0).toDouble();
           });
         },
       );
 
-      if (media == null) return;
+      if (medias == null || medias.isEmpty) return;
 
-      await _chatService.sendMediaMessage(
+      // Seluruh foto disimpan dalam satu dokumen Firestore.
+      await _chatService.sendGalleryMessage(
         conversationId: widget.conversationId,
-        media: media,
+        mediaList: medias,
         text: _messageController.text.trim(),
       );
 
@@ -291,13 +293,13 @@ class _ChatPageState extends State<ChatPage> {
 
       _messageController.clear();
 
-      _showMessage('Foto berhasil dikirim.');
+      _showMessage('${medias.length} foto berhasil dikirim dalam satu pesan.');
     } catch (e, stackTrace) {
-      debugPrint('GAGAL MENGIRIM FOTO: $e');
+      debugPrint('GAGAL MENGIRIM GALERI: $e');
       debugPrintStack(stackTrace: stackTrace);
 
       if (mounted) {
-        _showMessage('Gagal mengirim foto: $e');
+        _showMessage('Gagal mengirim galeri: $e');
       }
     } finally {
       if (mounted) {
@@ -335,7 +337,7 @@ class _ChatPageState extends State<ChatPage> {
           if (!mounted) return;
 
           setState(() {
-            _uploadProgress = progress.clamp(0.0, 1.0);
+            _uploadProgress = progress.clamp(0.0, 1.0).toDouble();
           });
         },
       );
@@ -379,6 +381,7 @@ class _ChatPageState extends State<ChatPage> {
     if (timestamp is! Timestamp) return '';
 
     final dateTime = timestamp.toDate();
+
     final hour = dateTime.hour.toString().padLeft(2, '0');
     final minute = dateTime.minute.toString().padLeft(2, '0');
 
@@ -459,7 +462,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   // ============================================================
-  // IMAGE ATTACHMENT
+  // SINGLE IMAGE ATTACHMENT
   // ============================================================
 
   Widget _buildImageAttachment(String url) {
@@ -477,7 +480,7 @@ class _ChatPageState extends State<ChatPage> {
                     child: Image.network(
                       url,
                       fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) {
+                      errorBuilder: (_, _, _) {
                         return const Padding(
                           padding: EdgeInsets.all(30),
                           child: Icon(
@@ -529,7 +532,7 @@ class _ChatPageState extends State<ChatPage> {
               ),
             );
           },
-          errorBuilder: (context, error, stackTrace) {
+          errorBuilder: (_, _, _) {
             return Container(
               width: 230,
               height: 120,
@@ -549,6 +552,193 @@ class _ChatPageState extends State<ChatPage> {
             );
           },
         ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // GALLERY FULLSCREEN VIEWER
+  // ============================================================
+
+  void _showGalleryViewer(List<Map<String, dynamic>> photos, int initialIndex) {
+    if (photos.isEmpty) return;
+
+    var currentIndex = initialIndex.clamp(0, photos.length - 1).toInt();
+
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final photo = photos[currentIndex];
+            final url = photo['url']?.toString() ?? '';
+
+            return Dialog(
+              backgroundColor: Colors.black,
+              insetPadding: const EdgeInsets.all(8),
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: InteractiveViewer(
+                      minScale: 0.8,
+                      maxScale: 4,
+                      child: Center(
+                        child: Image.network(
+                          url,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, _, _) {
+                            return const Icon(
+                              Icons.broken_image,
+                              color: Colors.white70,
+                              size: 60,
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 4,
+                    left: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        '${currentIndex + 1} / ${photos.length}',
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: IconButton(
+                      onPressed: () {
+                        Navigator.pop(dialogContext);
+                      },
+                      icon: const Icon(Icons.close, color: Colors.white),
+                    ),
+                  ),
+                  if (photos.length > 1) ...[
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: IconButton.filledTonal(
+                          onPressed: currentIndex > 0
+                              ? () {
+                                  setDialogState(() {
+                                    currentIndex--;
+                                  });
+                                }
+                              : null,
+                          icon: const Icon(Icons.chevron_left),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: IconButton.filledTonal(
+                          onPressed: currentIndex < photos.length - 1
+                              ? () {
+                                  setDialogState(() {
+                                    currentIndex++;
+                                  });
+                                }
+                              : null,
+                          icon: const Icon(Icons.chevron_right),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ============================================================
+  // GALLERY ATTACHMENT
+  // ============================================================
+
+  Widget _buildGalleryAttachment(List<Map<String, dynamic>> photos) {
+    if (photos.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    const tileWidth = 108.0;
+    const tileHeight = 100.0;
+
+    final single = photos.length == 1;
+
+    return SizedBox(
+      width: single ? 230 : 224,
+      child: Wrap(
+        spacing: 4,
+        runSpacing: 4,
+        children: List.generate(photos.length, (index) {
+          final photo = photos[index];
+          final url = photo['url']?.toString() ?? '';
+
+          final width = single ? 230.0 : tileWidth;
+          final height = single ? 180.0 : tileHeight;
+
+          return GestureDetector(
+            onTap: () {
+              _showGalleryViewer(photos, index);
+            },
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.network(
+                url,
+                width: width,
+                height: height,
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+
+                  return Container(
+                    width: width,
+                    height: height,
+                    color: Colors.black26,
+                    alignment: Alignment.center,
+                    child: const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  );
+                },
+                errorBuilder: (_, _, _) {
+                  return Container(
+                    width: width,
+                    height: height,
+                    color: Colors.black26,
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.broken_image,
+                      color: Colors.white70,
+                    ),
+                  );
+                },
+              ),
+            ),
+          );
+        }),
       ),
     );
   }
@@ -691,8 +881,19 @@ class _ChatPageState extends State<ChatPage> {
         : <String, dynamic>{};
 
     final attachmentUrl = attachment['url']?.toString() ?? '';
+
     final attachmentName = attachment['name']?.toString() ?? '';
+
     final attachmentSize = attachment['size'];
+
+    final rawAttachments = data['attachments'];
+
+    final galleryPhotos = rawAttachments is List
+        ? rawAttachments
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList()
+        : <Map<String, dynamic>>[];
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -717,6 +918,9 @@ class _ChatPageState extends State<ChatPage> {
             if (type == 'image' && attachmentUrl.isNotEmpty)
               _buildImageAttachment(attachmentUrl),
 
+            if (type == 'image_gallery' && galleryPhotos.isNotEmpty)
+              _buildGalleryAttachment(galleryPhotos),
+
             if (type == 'document' && attachmentUrl.isNotEmpty)
               _buildDocumentAttachment(
                 name: attachmentName,
@@ -725,7 +929,9 @@ class _ChatPageState extends State<ChatPage> {
               ),
 
             if (text.isNotEmpty) ...[
-              if (type != 'text' || attachmentUrl.isNotEmpty)
+              if (type != 'text' ||
+                  attachmentUrl.isNotEmpty ||
+                  galleryPhotos.isNotEmpty)
                 const SizedBox(height: 7),
               Align(
                 alignment: Alignment.centerLeft,
@@ -903,7 +1109,6 @@ class _ChatPageState extends State<ChatPage> {
                   onPressed: _sending ? null : _showAttachmentOptions,
                   icon: const Icon(Icons.attach_file, color: Colors.white70),
                 ),
-
                 Expanded(
                   child: TextField(
                     controller: _messageController,
@@ -928,9 +1133,7 @@ class _ChatPageState extends State<ChatPage> {
                     onSubmitted: (_) => _sendMessage(),
                   ),
                 ),
-
                 const SizedBox(width: 8),
-
                 SizedBox(
                   width: 48,
                   height: 48,
@@ -953,7 +1156,6 @@ class _ChatPageState extends State<ChatPage> {
                 ),
               ],
             ),
-
             _buildUploadProgress(),
           ],
         ),

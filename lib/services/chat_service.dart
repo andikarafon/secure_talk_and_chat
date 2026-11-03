@@ -189,6 +189,37 @@ class ChatService {
   }
 
   // =====================================================
+  // VALIDATE CONVERSATION PARTICIPANT
+  // =====================================================
+
+  Future<void> _validateConversationParticipant({
+    required String conversationId,
+    required String uid,
+  }) async {
+    if (conversationId.trim().isEmpty) {
+      throw ArgumentError('Conversation ID tidak valid.');
+    }
+
+    final conversationRef = _conversationRef(conversationId);
+
+    final conversation = await conversationRef.get(
+      const GetOptions(source: Source.server),
+    );
+
+    if (!conversation.exists) {
+      throw StateError('Percakapan tidak ditemukan.');
+    }
+
+    final data = conversation.data()!;
+
+    final participants = List<String>.from(data['participants'] ?? const []);
+
+    if (!participants.contains(uid)) {
+      throw StateError('Anda bukan peserta percakapan ini.');
+    }
+  }
+
+  // =====================================================
   // SEND TEXT MESSAGE
   // =====================================================
 
@@ -205,24 +236,13 @@ class ChatService {
     }
 
     final uid = currentUid;
-    final conversationRef = _conversationRef(conversationId);
 
-    // Memastikan percakapan tersedia di server.
-    final conversation = await conversationRef.get(
-      const GetOptions(source: Source.server),
+    await _validateConversationParticipant(
+      conversationId: conversationId,
+      uid: uid,
     );
 
-    if (!conversation.exists) {
-      throw StateError('Percakapan tidak ditemukan.');
-    }
-
-    final data = conversation.data()!;
-
-    final participants = List<String>.from(data['participants'] ?? const []);
-
-    if (!participants.contains(uid)) {
-      throw StateError('Anda bukan peserta percakapan ini.');
-    }
+    final conversationRef = _conversationRef(conversationId);
 
     final batch = _firestore.batch();
     final messageRef = conversationRef.collection('messages').doc();
@@ -242,7 +262,7 @@ class ChatService {
   }
 
   // =====================================================
-  // SEND MEDIA MESSAGE
+  // SEND SINGLE MEDIA MESSAGE
   // =====================================================
 
   Future<void> sendMediaMessage({
@@ -252,14 +272,6 @@ class ChatService {
   }) async {
     final uid = currentUid;
     final conversationRef = _conversationRef(conversationId);
-
-    // ---------------------------------------------------
-    // VALIDASI CONVERSATION ID
-    // ---------------------------------------------------
-
-    if (conversationId.trim().isEmpty) {
-      throw ArgumentError('Conversation ID tidak valid.');
-    }
 
     // ---------------------------------------------------
     // VALIDASI MEDIA TYPE
@@ -289,24 +301,13 @@ class ChatService {
     // VALIDASI CONVERSATION
     // ---------------------------------------------------
 
-    final conversation = await conversationRef.get(
-      const GetOptions(source: Source.server),
+    await _validateConversationParticipant(
+      conversationId: conversationId,
+      uid: uid,
     );
 
-    if (!conversation.exists) {
-      throw StateError('Percakapan tidak ditemukan.');
-    }
-
-    final data = conversation.data()!;
-
-    final participants = List<String>.from(data['participants'] ?? const []);
-
-    if (!participants.contains(uid)) {
-      throw StateError('Anda bukan peserta percakapan ini.');
-    }
-
     // ---------------------------------------------------
-    // MEMBUAT MESSAGE PREVIEW
+    // VALIDASI TEXT
     // ---------------------------------------------------
 
     final messageText = text.trim();
@@ -314,6 +315,10 @@ class ChatService {
     if (messageText.length > 4000) {
       throw ArgumentError('Pesan maksimal 4000 karakter.');
     }
+
+    // ---------------------------------------------------
+    // MESSAGE PREVIEW
+    // ---------------------------------------------------
 
     final lastMessage = messageText.isNotEmpty
         ? messageText
@@ -358,5 +363,160 @@ class ChatService {
     debugPrint('MEDIA SIZE: ${media.size}');
     debugPrint('STORAGE PATH: ${media.storagePath}');
     debugPrint('========================================');
+  }
+
+  // =====================================================
+  // SEND GALLERY MESSAGE
+  // =====================================================
+
+  Future<void> sendGalleryMessage({
+    required String conversationId,
+    required List<UploadedMedia> mediaList,
+    String text = '',
+  }) async {
+    final uid = currentUid;
+    final conversationRef = _conversationRef(conversationId);
+
+    // ---------------------------------------------------
+    // VALIDASI JUMLAH FOTO
+    // ---------------------------------------------------
+
+    if (mediaList.isEmpty) {
+      throw ArgumentError('Pilih minimal satu foto.');
+    }
+
+    if (mediaList.length > MediaService.maxGalleryImages) {
+      throw ArgumentError(
+        'Maksimal ${MediaService.maxGalleryImages} foto dalam satu galeri.',
+      );
+    }
+
+    // ---------------------------------------------------
+    // VALIDASI CAPTION
+    // ---------------------------------------------------
+
+    final messageText = text.trim();
+
+    if (messageText.length > 4000) {
+      throw ArgumentError('Pesan maksimal 4000 karakter.');
+    }
+
+    // ---------------------------------------------------
+    // VALIDASI SETIAP FOTO DAN TOTAL UKURAN
+    // ---------------------------------------------------
+
+    int totalSize = 0;
+
+    final List<Map<String, dynamic>> attachments = [];
+
+    const allowedImageMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+
+    for (final media in mediaList) {
+      if (media.type != 'image') {
+        throw ArgumentError('Galeri hanya boleh berisi file gambar.');
+      }
+
+      if (!allowedImageMimeTypes.contains(media.mimeType)) {
+        throw ArgumentError('Format foto ${media.name} tidak didukung.');
+      }
+
+      if (media.size <= 0) {
+        throw ArgumentError('Ukuran foto ${media.name} tidak valid.');
+      }
+
+      if (media.size > MediaService.maxImageSize) {
+        throw ArgumentError('Ukuran foto ${media.name} maksimal 10 MB.');
+      }
+
+      if (media.url.trim().isEmpty ||
+          media.storagePath.trim().isEmpty ||
+          media.name.trim().isEmpty) {
+        throw ArgumentError('Informasi foto ${media.name} tidak lengkap.');
+      }
+
+      // Pastikan file berasal dari folder percakapan dan pengguna ini.
+      final expectedPathPrefix = 'conversations/$conversationId/$uid/';
+
+      if (!media.storagePath.startsWith(expectedPathPrefix)) {
+        throw ArgumentError('Lokasi penyimpanan foto tidak valid.');
+      }
+
+      totalSize += media.size;
+
+      attachments.add({
+        'name': media.name,
+        'url': media.url,
+        'path': media.storagePath,
+        'mimeType': media.mimeType,
+        'size': media.size,
+      });
+    }
+
+    if (totalSize > MediaService.maxGallerySize) {
+      throw ArgumentError('Total ukuran galeri maksimal 100 MB.');
+    }
+
+    // ---------------------------------------------------
+    // VALIDASI PESERTA CONVERSATION
+    // ---------------------------------------------------
+
+    await _validateConversationParticipant(
+      conversationId: conversationId,
+      uid: uid,
+    );
+
+    // ---------------------------------------------------
+    // MESSAGE PREVIEW
+    // ---------------------------------------------------
+
+    final lastMessage = messageText.isNotEmpty
+        ? messageText
+        : '[Galeri Foto] ${mediaList.length} foto';
+
+    // ---------------------------------------------------
+    // SIMPAN SATU DOKUMEN GALLERY MESSAGE
+    // ---------------------------------------------------
+
+    final batch = _firestore.batch();
+
+    final messageRef = conversationRef.collection('messages').doc();
+
+    batch.set(messageRef, {
+      'senderId': uid,
+      'text': messageText,
+      'type': 'image_gallery',
+      'attachments': attachments,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    batch.update(conversationRef, {
+      'lastMessage': lastMessage,
+      'lastMessageAt': FieldValue.serverTimestamp(),
+    });
+
+    await batch.commit();
+
+    // ---------------------------------------------------
+    // DEBUG LOG
+    // ---------------------------------------------------
+
+    debugPrint('========== GALLERY MESSAGE SENT ==========');
+    debugPrint('CONVERSATION ID: $conversationId');
+    debugPrint('SENDER ID: $uid');
+    debugPrint('TOTAL PHOTOS: ${mediaList.length}');
+    debugPrint('TOTAL SIZE: $totalSize');
+    debugPrint('CAPTION: $messageText');
+
+    for (int i = 0; i < mediaList.length; i++) {
+      final media = mediaList[i];
+
+      debugPrint('--- PHOTO ${i + 1} ---');
+      debugPrint('NAME: ${media.name}');
+      debugPrint('SIZE: ${media.size}');
+      debugPrint('MIME TYPE: ${media.mimeType}');
+      debugPrint('STORAGE PATH: ${media.storagePath}');
+    }
+
+    debugPrint('==========================================');
   }
 }
