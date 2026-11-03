@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/app_user.dart';
+import 'media_service.dart';
 
 class ChatService {
   ChatService({FirebaseFirestore? firestore, FirebaseAuth? auth})
@@ -188,7 +189,7 @@ class ChatService {
   }
 
   // =====================================================
-  // SEND MESSAGE
+  // SEND TEXT MESSAGE
   // =====================================================
 
   Future<void> sendMessage({
@@ -238,5 +239,124 @@ class ChatService {
     });
 
     await batch.commit();
+  }
+
+  // =====================================================
+  // SEND MEDIA MESSAGE
+  // =====================================================
+
+  Future<void> sendMediaMessage({
+    required String conversationId,
+    required UploadedMedia media,
+    String text = '',
+  }) async {
+    final uid = currentUid;
+    final conversationRef = _conversationRef(conversationId);
+
+    // ---------------------------------------------------
+    // VALIDASI CONVERSATION ID
+    // ---------------------------------------------------
+
+    if (conversationId.trim().isEmpty) {
+      throw ArgumentError('Conversation ID tidak valid.');
+    }
+
+    // ---------------------------------------------------
+    // VALIDASI MEDIA TYPE
+    // ---------------------------------------------------
+
+    if (!['image', 'document'].contains(media.type)) {
+      throw ArgumentError('Tipe attachment tidak valid.');
+    }
+
+    // ---------------------------------------------------
+    // VALIDASI FILE SIZE
+    // ---------------------------------------------------
+
+    if (media.size <= 0) {
+      throw ArgumentError('Ukuran file tidak valid.');
+    }
+
+    if (media.type == 'image' && media.size > MediaService.maxImageSize) {
+      throw ArgumentError('Ukuran foto maksimal 10 MB.');
+    }
+
+    if (media.type == 'document' && media.size > MediaService.maxDocumentSize) {
+      throw ArgumentError('Ukuran dokumen maksimal 20 MB.');
+    }
+
+    // ---------------------------------------------------
+    // VALIDASI CONVERSATION
+    // ---------------------------------------------------
+
+    final conversation = await conversationRef.get(
+      const GetOptions(source: Source.server),
+    );
+
+    if (!conversation.exists) {
+      throw StateError('Percakapan tidak ditemukan.');
+    }
+
+    final data = conversation.data()!;
+
+    final participants = List<String>.from(data['participants'] ?? const []);
+
+    if (!participants.contains(uid)) {
+      throw StateError('Anda bukan peserta percakapan ini.');
+    }
+
+    // ---------------------------------------------------
+    // MEMBUAT MESSAGE PREVIEW
+    // ---------------------------------------------------
+
+    final messageText = text.trim();
+
+    if (messageText.length > 4000) {
+      throw ArgumentError('Pesan maksimal 4000 karakter.');
+    }
+
+    final lastMessage = messageText.isNotEmpty
+        ? messageText
+        : media.type == 'image'
+        ? '[Foto]'
+        : '[Dokumen] ${media.name}';
+
+    // ---------------------------------------------------
+    // SIMPAN MESSAGE DAN UPDATE CONVERSATION
+    // ---------------------------------------------------
+
+    final batch = _firestore.batch();
+
+    final messageRef = conversationRef.collection('messages').doc();
+
+    batch.set(messageRef, {
+      'senderId': uid,
+      'text': messageText,
+      'type': media.type,
+      'attachment': {
+        'name': media.name,
+        'url': media.url,
+        'path': media.storagePath,
+        'mimeType': media.mimeType,
+        'size': media.size,
+      },
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    batch.update(conversationRef, {
+      'lastMessage': lastMessage,
+      'lastMessageAt': FieldValue.serverTimestamp(),
+    });
+
+    await batch.commit();
+
+    debugPrint('========== MEDIA MESSAGE SENT ==========');
+    debugPrint('CONVERSATION ID: $conversationId');
+    debugPrint('SENDER ID: $uid');
+    debugPrint('MEDIA TYPE: ${media.type}');
+    debugPrint('MEDIA NAME: ${media.name}');
+    debugPrint('MEDIA SIZE: ${media.size}');
+    debugPrint('STORAGE PATH: ${media.storagePath}');
+    debugPrint('========================================');
   }
 }
