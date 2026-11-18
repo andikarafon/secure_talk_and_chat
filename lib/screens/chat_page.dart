@@ -7,6 +7,7 @@ import '../services/chat_service.dart';
 import '../services/call_signaling_service.dart';
 import '../services/media_service.dart';
 import 'call_page.dart';
+import 'media_gallery_page.dart';
 
 class ChatPage extends StatefulWidget {
   final String conversationId;
@@ -34,7 +35,6 @@ class _ChatPageState extends State<ChatPage> {
   final CallSignalingService _callSignalingService = CallSignalingService();
 
   final TextEditingController _messageController = TextEditingController();
-
   final ScrollController _scrollController = ScrollController();
 
   bool _sending = false;
@@ -78,15 +78,12 @@ class _ChatPageState extends State<ChatPage> {
 
     try {
       if (widget.openCallOnStart) {
-        // Panggilan masuk menggunakan dokumen panggilan
-        // yang sudah dibuat oleh penelepon.
         activeCallId = widget.callId;
 
         if (activeCallId == null || activeCallId.trim().isEmpty) {
           throw StateError('ID panggilan masuk tidak tersedia.');
         }
       } else {
-        // Panggilan keluar membuat dokumen baru di Firestore.
         activeCallId = await _callSignalingService.createCall(
           conversationId: widget.conversationId,
           callerId: currentUid,
@@ -121,6 +118,21 @@ class _ChatPageState extends State<ChatPage> {
     } finally {
       _callPageOpened = false;
     }
+  }
+
+  // ============================================================
+  // OPEN SHARED MEDIA GALLERY
+  // ============================================================
+
+  void _openMediaGallery() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => MediaGalleryPage(
+          conversationId: widget.conversationId,
+          otherUserName: widget.otherUserName,
+        ),
+      ),
+    );
   }
 
   // ============================================================
@@ -282,7 +294,6 @@ class _ChatPageState extends State<ChatPage> {
 
       if (medias == null || medias.isEmpty) return;
 
-      // Seluruh foto disimpan dalam satu dokumen Firestore.
       await _chatService.sendGalleryMessage(
         conversationId: widget.conversationId,
         mediaList: medias,
@@ -881,9 +892,7 @@ class _ChatPageState extends State<ChatPage> {
         : <String, dynamic>{};
 
     final attachmentUrl = attachment['url']?.toString() ?? '';
-
     final attachmentName = attachment['name']?.toString() ?? '';
-
     final attachmentSize = attachment['size'];
 
     final rawAttachments = data['attachments'];
@@ -1197,18 +1206,28 @@ class _ChatPageState extends State<ChatPage> {
         backgroundColor: const Color(0xFF111318),
         foregroundColor: Colors.white,
         titleSpacing: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.otherUserName,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        title: InkWell(
+          onTap: _openMediaGallery,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.otherUserName,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Text(
+                  'Ketuk untuk melihat media',
+                  style: TextStyle(fontSize: 11, color: Colors.white60),
+                ),
+              ],
             ),
-            const Text(
-              'Secure Talk and Chat',
-              style: TextStyle(fontSize: 11, color: Colors.white60),
-            ),
-          ],
+          ),
         ),
         actions: [
           IconButton(
